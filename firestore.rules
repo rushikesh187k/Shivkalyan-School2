@@ -1,0 +1,131 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Catch-all Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Common Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function existing() {
+      return resource.data;
+    }
+    
+    function incoming() {
+      return request.resource.data;
+    }
+
+    // Role verification (Admin)
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Admin';
+    }
+
+    // User Entity Validation Blueprint
+    function isValidUser(data) {
+      let isBasicValid = data.fullName is string && data.fullName.size() > 0 && data.fullName.size() <= 100
+        && data.mobileNumber is string && data.mobileNumber.size() > 0 && data.mobileNumber.size() <= 20
+        && data.role in ['Student', 'Teacher', 'Admin', 'Parent']
+        && data.createdAt is string
+        && data.updatedAt is string;
+        
+      let hasRequiredKeys = data.keys().hasAll(['fullName', 'mobileNumber', 'role', 'createdAt', 'updatedAt']);
+      let hasOnlyAllowedKeys = data.keys().hasOnly(['fullName', 'mobileNumber', 'role', 'createdAt', 'updatedAt', 'photoURL', 'qualifications', 'assignedClass']);
+      let validPhoto = !('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 2097152);
+      let validTeacherFields = !('qualifications' in data) || (data.qualifications is string && data.qualifications.size() <= 200) || !('assignedClass' in data) || (data.assignedClass is string && data.assignedClass.size() <= 50);
+      
+      return hasRequiredKeys && hasOnlyAllowedKeys && isBasicValid && validPhoto && validTeacherFields;
+    }
+
+    function isValidUserUpdate(data, existingData) {
+      let isBasicValid = data.fullName is string && data.fullName.size() > 0 && data.fullName.size() <= 100
+        && data.mobileNumber is string && data.mobileNumber.size() > 0 && data.mobileNumber.size() <= 20
+        && data.role in ['Student', 'Teacher', 'Admin', 'Parent']
+        && data.updatedAt is string;
+        
+      let validPhoto = !('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 5000000);
+      let validTeacherFields = !('qualifications' in data) || (data.qualifications is string && data.qualifications.size() <= 200) || !('assignedClass' in data) || (data.assignedClass is string && data.assignedClass.size() <= 50);
+
+      return isBasicValid && validPhoto && validTeacherFields;
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      // User can read their own profile, Admins can read all profiles
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      // Admin list query filtering
+      allow list: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      
+      // User can create their own profile specifically linking their uid
+      allow create: if isSignedIn() 
+        && (request.auth.uid == userId || isAdmin())
+        && isValidUser(incoming());
+
+      // User can update their own profile
+      allow update: if isSignedIn() && (request.auth.uid == userId || isAdmin())
+        && isValidUserUpdate(incoming(), existing());
+        
+      allow delete: if isAdmin();
+    }
+
+    function isValidTeacher(data) {
+      return data.keys().hasAll(['fullName', 'mobileNumber', 'subjectSpecialty', 'createdAt'])
+        && data.keys().size() == 4
+        && data.fullName is string && data.fullName.size() > 0 && data.fullName.size() <= 100
+        && data.mobileNumber is string && data.mobileNumber.size() > 0 && data.mobileNumber.size() <= 20
+        && data.subjectSpecialty is string && data.subjectSpecialty.size() > 0 && data.subjectSpecialty.size() <= 100
+        && data.createdAt is string;
+    }
+
+    match /teachers/{teacherId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidTeacher(incoming());
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    function isValidNotice(data) {
+      return data.keys().hasAll(['title', 'content', 'authorName', 'createdAt'])
+        && data.keys().size() == 4
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 100
+        && data.content is string && data.content.size() > 0 && data.content.size() <= 1000
+        && data.authorName is string
+        && data.createdAt is string;
+    }
+
+    match /notices/{noticeId} {
+      // Anyone signed in can read notices
+      allow read: if isSignedIn();
+      // Only admins can create/update/delete notices
+      allow create: if isAdmin() && isValidNotice(incoming());
+      allow update: if isAdmin() && isValidNotice(incoming());
+      allow delete: if isAdmin();
+    }
+    function isValidMaterial(data) {
+      return data.keys().hasAll(['title', 'type', 'fileData', 'fileName', 'fileType', 'uploadedBy', 'createdAt'])
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 100
+        && data.type in ['homework', 'timetable', 'notes', 'study_material']
+        && data.fileData is string && data.fileData.size() <= 900000
+        && data.fileName is string && data.fileName.size() <= 100
+        && data.fileType is string && data.fileType.size() <= 50
+        && data.uploadedBy is string
+        && (!('classTarget' in data) || data.classTarget is string)
+        && data.createdAt is string;
+    }
+
+    match /materials/{materialId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['Teacher', 'Admin']);
+      allow update, delete: if isSignedIn() && (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['Teacher', 'Admin']);
+    }
+
+    match /submissions/{submissionId} {
+      allow read: if isSignedIn() && (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['Teacher', 'Admin'] || resource.data.studentId == request.auth.uid);
+      allow create: if isSignedIn() && request.resource.data.studentId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+  }
+}

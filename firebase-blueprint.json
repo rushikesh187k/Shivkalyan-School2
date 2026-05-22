@@ -1,0 +1,120 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the school management system.",
+      "type": "object",
+      "properties": {
+        "fullName": {
+          "type": "string",
+          "description": "Full name of the user."
+        },
+        "mobileNumber": {
+          "type": "string",
+          "description": "Mobile number used for authentication."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["Student", "Teacher", "Admin", "Parent"],
+          "description": "Role of the user in the system."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "Base64 or URL string of the user's profile image."
+        }
+      },
+      "required": ["fullName", "mobileNumber", "role", "createdAt", "updatedAt"]
+    },
+    "Notice": {
+      "title": "Notice",
+      "description": "An announcement posted by an Admin.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Title of the notice."
+        },
+        "content": {
+          "type": "string",
+          "description": "Content of the notice."
+        },
+        "authorName": {
+          "type": "string",
+          "description": "Name of the admin who posted."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["title", "content", "authorName", "createdAt"]
+    },
+    "Teacher": {
+      "title": "Teacher",
+      "description": "Pre-registered teacher information.",
+      "type": "object",
+      "properties": {
+        "fullName": {
+          "type": "string",
+          "description": "Full name of the teacher."
+        },
+        "mobileNumber": {
+          "type": "string",
+          "description": "Mobile number of the teacher."
+        },
+        "subjectSpecialty": {
+          "type": "string",
+          "description": "Subject specialty of the teacher."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["fullName", "mobileNumber", "subjectSpecialty", "createdAt"]
+    },
+    "Material": {
+      "title": "Material",
+      "description": "Educational materials like homework, timetable, and notes.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "type": { "type": "string" },
+        "fileData": { "type": "string", "description": "Base64 encoded file data" },
+        "fileName": { "type": "string" },
+        "fileType": { "type": "string" },
+        "uploadedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "type", "fileData", "fileName", "fileType", "uploadedBy", "createdAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/User"
+      },
+      "description": "User profiles storing their roles and basic details."
+    },
+    "teachers/{teacherId}": {
+      "schema": {
+        "$ref": "#/entities/Teacher"
+      },
+      "description": "Pre-registered teachers added by admin."
+    },
+    "notices/{noticeId}": {
+      "schema": {
+        "$ref": "#/entities/Notice"
+      },
+      "description": "Notices posted by admins."
+    }
+  }
+}

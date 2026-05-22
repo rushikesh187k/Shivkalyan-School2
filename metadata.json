@@ -1,0 +1,6 @@
+{
+  "name": "Shivkalyan Shikshan Sansthan",
+  "description": "School Management Application with Firebase Authentication and Role-Based Routing",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
