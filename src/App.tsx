@@ -7,7 +7,7 @@ import React, { useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, onSnapshot } from "firebase/firestore";
 import { auth, db } from "./lib/firebase";
 import { useAuthStore } from "./store/useAuthStore";
 import { UserProfile } from "./types";
@@ -52,31 +52,41 @@ export default function App() {
   const { setUser, setProfile, setLoading } = useAuthStore();
 
   useEffect(() => {
-    // Temporary disabled auto device recognize
-    signOut(auth);
+    let unsubscribeDoc: () => void;
 
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       setUser(user);
+      if (unsubscribeDoc) unsubscribeDoc();
+
       if (user) {
-        try {
-          const docRef = doc(db, "users", user.uid);
-          const docSnap = await getDoc(docRef);
-          if (docSnap.exists()) {
-            setProfile({ id: docSnap.id, ...docSnap.data() } as UserProfile);
-          } else {
+        const docId = user.email || user.uid;
+        const docRef = doc(db, "users", docId);
+        unsubscribeDoc = onSnapshot(
+          docRef,
+          (docSnap) => {
+            if (docSnap.exists()) {
+              setProfile({ id: docSnap.id, ...docSnap.data() } as UserProfile);
+            } else {
+              setProfile(null);
+            }
+            setLoading(false);
+          },
+          (error) => {
+            console.error("Error fetching user profile:", error);
             setProfile(null);
+            setLoading(false);
           }
-        } catch (error) {
-          console.error("Error fetching user profile:", error);
-          setProfile(null);
-        }
+        );
       } else {
         setProfile(null);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeDoc) unsubscribeDoc();
+    };
   }, [setUser, setProfile, setLoading]);
 
   return (

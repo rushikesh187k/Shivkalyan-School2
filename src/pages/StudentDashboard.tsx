@@ -1,25 +1,18 @@
 import React, { useState, useEffect } from "react";
 import { LayoutDashboard, CalendarCheck, BookOpen, Wallet, User, QrCode, Download, ChevronRight, CheckCircle2, Clock, Eye, X, FileText, Loader2, Upload } from "lucide-react";
 import { DashboardLayout, TabItem } from "../components/DashboardLayout";
+import { SyllabusTracker } from "../components/SyllabusTracker";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { collection, onSnapshot, query, orderBy, doc, updateDoc, setDoc } from "firebase/firestore";
-import { db, storage } from "../lib/firebase";
-import { ref, uploadBytes, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import { collection, onSnapshot, query, orderBy, doc, updateDoc, setDoc, addDoc } from "firebase/firestore";
+import { db } from "../lib/firebase";
 import { useAuthStore } from "../store/useAuthStore";
 import { Material } from "../types";
 import toast from "react-hot-toast";
 
-const performanceData = [
-  { month: "Jan", score: 85 },
-  { month: "Feb", score: 88 },
-  { month: "Mar", score: 84 },
-  { month: "Apr", score: 92 },
-  { month: "May", score: 95 },
-  { month: "Jun", score: 91 },
-];
-
 const TABS: TabItem[] = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
+  { id: "syllabus", label: "Syllabus Tracker", icon: BookOpen },
+  { id: "timetable", label: "Exam Time Table", icon: CalendarCheck },
   { id: "attendance", label: "Attendance", icon: CalendarCheck },
   { id: "homework", label: "Homework", icon: BookOpen },
   { id: "fees", label: "Fees", icon: Wallet },
@@ -33,6 +26,10 @@ export function StudentDashboard() {
     switch (activeTab) {
       case "overview":
         return <OverviewTab />;
+      case "syllabus":
+        return <SyllabusTracker />;
+      case "timetable":
+        return <TimetableTab />;
       case "attendance":
         return <AttendanceTab />;
       case "homework":
@@ -76,6 +73,7 @@ export function StudentDashboard() {
 function OverviewTab() {
   const { profile } = useAuthStore();
   const [liveProfile, setLiveProfile] = useState<any>(profile);
+  const [notices, setNotices] = useState<any[]>([]);
 
   useEffect(() => {
     if (!profile?.id) return;
@@ -87,15 +85,71 @@ function OverviewTab() {
     return () => unsub();
   }, [profile?.id]);
 
+  useEffect(() => {
+    const q = query(collection(db, "notices"), orderBy("createdAt", "desc"));
+    const unsub = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setNotices(data);
+    });
+    return () => unsub();
+  }, []);
+
+  const dailyNotice = notices.find(n => n.category === "Daily Notice");
+  const otherNotices = notices.filter(n => n.category !== "Daily Notice");
+
   return (
     <div className="space-y-6">
+      {/* School Notice Board */}
+      <div className="mb-8">
+        <h2 className="text-2xl font-bold text-white mb-4">School Notice Board</h2>
+        
+        {/* Today's Update */}
+        <div className="mb-6">
+          <h3 className="text-sm font-medium text-[#8E8E93] uppercase tracking-wider mb-3">Today's Update</h3>
+          {dailyNotice ? (
+            <div className="p-6 rounded-2xl border border-white/10 bg-[#1A1A1A]">
+              <h4 className="text-lg font-semibold text-white mb-2">{dailyNotice.title}</h4>
+              <p className="text-sm text-[#8E8E93] mb-4">{new Date(dailyNotice.createdAt).toLocaleDateString()}</p>
+              <p className="text-white/90 leading-relaxed whitespace-pre-wrap">{dailyNotice.content}</p>
+            </div>
+          ) : (
+             <div className="p-6 rounded-2xl border border-white/5 bg-[#1A1A1A] text-center">
+              <p className="text-[#8E8E93]">No new daily notices for today.</p>
+            </div>
+          )}
+        </div>
+
+        {/* Recent Announcements */}
+        {otherNotices.length > 0 && (
+          <div>
+            <h3 className="text-sm font-medium text-[#8E8E93] uppercase tracking-wider mb-3">Recent Announcements</h3>
+            <div className="space-y-3 max-h-80 overflow-y-auto pr-2 custom-scrollbar">
+              {otherNotices.map((notice: any) => (
+                <div key={notice.id} className="p-5 rounded-2xl border border-white/5 bg-[#121212] flex flex-col gap-2">
+                   <div className="flex items-start justify-between gap-4">
+                     <h4 className="text-white font-medium flex items-center gap-2">
+                       {notice.title}
+                       {notice.category && (
+                         <span className="text-[10px] uppercase tracking-wider font-bold border border-white/20 px-2 py-1 rounded-full whitespace-nowrap">
+                           [{notice.category}]
+                         </span>
+                       )}
+                     </h4>
+                     <span className="text-xs text-[#8E8E93] shrink-0">{new Date(notice.createdAt).toLocaleDateString()}</span>
+                   </div>
+                   <p className="text-sm text-[#8E8E93] line-clamp-2">{notice.content}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Top Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-4">
         {[
-          { label: "Attendance", value: liveProfile?.attendancePercentage !== undefined ? `${liveProfile.attendancePercentage}%` : "–", color: "text-green-400", bg: "bg-green-400/10", border: "border-green-400/20" },
+          { label: "Attendance", value: liveProfile?.attendancePercentage !== undefined ? `${liveProfile.attendancePercentage}%` : "Not recorded", color: "text-green-400", bg: "bg-green-400/10", border: "border-green-400/20" },
           { label: "Overall Grade", value: liveProfile?.overallGrade || "Not Graded", color: "text-blue-400", bg: "bg-blue-400/10", border: "border-blue-400/20" },
-          { label: "Pending Tasks", value: "3", color: "text-yellow-400", bg: "bg-yellow-400/10", border: "border-yellow-400/20" },
-          { label: "Fee Status", value: "Paid", color: "text-white", bg: "bg-white/10", border: "border-white/20" },
         ].map((stat, i) => (
           <div key={i} className={`p-5 rounded-2xl border ${stat.border} ${stat.bg} backdrop-blur-md flex flex-col justify-between`}>
             <span className="text-xs font-medium text-[#8E8E93] uppercase tracking-wider">{stat.label}</span>
@@ -107,41 +161,53 @@ function OverviewTab() {
       {/* Analytics Chart */}
       <div className="p-6 rounded-3xl border border-white/5 bg-[#121212]">
         <h3 className="text-sm font-medium text-white mb-6">Performance Trajectory</h3>
-        <div className="h-[250px] w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={performanceData}>
-              <defs>
-                <linearGradient id="colorScore" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#ffffff" stopOpacity={0.3}/>
-                  <stop offset="95%" stopColor="#ffffff" stopOpacity={0}/>
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
-              <XAxis dataKey="month" stroke="#8E8E93" fontSize={12} tickLine={false} axisLine={false} />
-              <YAxis stroke="#8E8E93" fontSize={12} tickLine={false} axisLine={false} />
-              <Tooltip 
-                contentStyle={{ backgroundColor: "#1A1A1A", borderColor: "#333", borderRadius: "12px", color: "#fff" }}
-                itemStyle={{ color: "#fff" }}
-              />
-              <Area type="monotone" dataKey="score" stroke="#ffffff" strokeWidth={2} fillOpacity={1} fill="url(#colorScore)" />
-            </AreaChart>
-          </ResponsiveContainer>
+        <div className="flex items-center justify-center h-[250px] w-full text-center text-[#8E8E93] border border-dashed border-white/5 rounded-2xl bg-black/20">
+          <p>No performance records available.</p>
         </div>
       </div>
+    </div>
+  );
+}
 
-      {/* AI Assistant Placeholder */}
-      <div className="p-6 rounded-3xl border border-blue-500/20 bg-gradient-to-r from-blue-900/20 to-purple-900/20 relative overflow-hidden">
-        <div className="absolute top-0 right-0 p-4 opacity-50">
-          <div className="w-24 h-24 bg-blue-500/30 blur-3xl rounded-full"></div>
-        </div>
-        <h3 className="text-sm font-medium text-blue-300 mb-2 flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-blue-400 animate-pulse"></span>
-          AI Study Assistant
-        </h3>
-        <p className="text-sm text-gray-400 max-w-md">Based on your recent scores, you should focus more on Advanced Mathematics. I have generated a personalized study plan for you.</p>
-        <button className="mt-4 px-4 py-2 bg-blue-500/20 border border-blue-500/30 rounded-xl text-xs font-medium text-blue-200 hover:bg-blue-500/30 transition-colors">
-          View Study Plan
-        </button>
+function TimetableTab() {
+  const { profile } = useAuthStore();
+  const [timetable, setTimetable] = useState<any | null>(null);
+
+  useEffect(() => {
+    if (!profile) return;
+    const { studentClass, studentMedium } = profile;
+    const qTimetables = query(collection(db, "exam_timetables"), orderBy("createdAt", "desc"));
+    const unsub = onSnapshot(qTimetables, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
+      const myTimetable = data.find(t => t.classTarget === studentClass && t.mediumTarget === studentMedium);
+      setTimetable(myTimetable || null);
+    });
+    return () => unsub();
+  }, [profile]);
+
+  return (
+    <div className="space-y-6">
+      <div className="mb-8">
+        <h2 className="text-2xl font-bold text-white mb-4">Exam Time Table</h2>
+        {!timetable ? (
+           <div className="p-10 rounded-2xl border border-white/5 bg-[#1A1A1A] text-center">
+             <p className="text-[#8E8E93]">No active exam timetable found for your class and medium.</p>
+           </div>
+        ) : (
+          <div className="p-6 rounded-2xl border border-white/5 bg-[#121212]">
+             <h3 className="text-lg font-medium text-white mb-6">{timetable.title}</h3>
+             <div className="space-y-3">
+               {timetable.schedule && timetable.schedule.map((entry: any, i: number) => (
+                  <div key={i} className="flex justify-between items-center p-4 rounded-xl bg-black/40 border border-white/5 hover:bg-[#1A1A1A] transition-colors">
+                     <span className="text-[#8E8E93] text-sm tabular-nums">
+                       {new Date(entry.date).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}
+                     </span>
+                     <span className="text-white font-medium text-right">{entry.subject}</span>
+                  </div>
+               ))}
+             </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -191,62 +257,94 @@ function AttendanceTab() {
 
 function HomeworkTab() {
   const { profile } = useAuthStore();
-  const [materials, setMaterials] = useState<Material[]>([]);
-  const [previewMaterial, setPreviewMaterial] = useState<Material | null>(null);
-  const [submittingFor, setSubmittingFor] = useState<Material | null>(null);
+  
+  // Clean states for different content types
+  const [homeworkList, setHomeworkList] = useState<any[]>([]);
+  const [studyMaterialsList, setStudyMaterialsList] = useState<any[]>([]);
+
+  const [previewMaterial, setPreviewMaterial] = useState<any | null>(null);
+  const [submittingFor, setSubmittingFor] = useState<any | null>(null);
   const [submissionFile, setSubmissionFile] = useState<File | null>(null);
-  const [submissionState, setSubmissionState] = useState<'IDLE' | 'UPLOADING' | 'ERROR'>('IDLE');
+  const [isUploading, setIsUploading] = useState(false);
+
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   useEffect(() => {
-    let allMaterials: Material[] = [];
-
-    const updateState = () => {
-      const sorted = [...allMaterials].sort((a, b) => 
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
-      setMaterials(sorted);
-    };
-
-    const qMaterials = query(collection(db, "materials"), orderBy("createdAt", "desc"));
-    const unsubMaterials = onSnapshot(qMaterials, (snapshot) => {
-      const fetched = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Material[];
-      allMaterials = allMaterials.filter(m => m.type === "homework" || m.type === "study_material"); 
-      allMaterials = [...allMaterials, ...fetched.filter(m => m.type !== "homework" && m.type !== "study_material")];
-      updateState();
-    });
-
+    // 1. Homework listener
     const qHomework = query(collection(db, "homework"), orderBy("createdAt", "desc"));
     const unsubHomework = onSnapshot(qHomework, (snapshot) => {
-      const fetched = snapshot.docs.map(doc => ({ id: doc.id, type: "homework", ...doc.data() })) as Material[];
-      allMaterials = allMaterials.filter(m => m.type !== "homework");
-      allMaterials = [...allMaterials, ...fetched];
-      updateState();
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setHomeworkList(data);
+    }, (error) => {
+      console.error("Homework listener error:", error);
     });
 
+    // 2. Study Materials listener
     const qStudyMaterials = query(collection(db, "study_materials"), orderBy("createdAt", "desc"));
     const unsubStudyMaterials = onSnapshot(qStudyMaterials, (snapshot) => {
-      const fetched = snapshot.docs.map(doc => ({ id: doc.id, type: "study_material", ...doc.data() })) as Material[];
-      allMaterials = allMaterials.filter(m => m.type !== "study_material");
-      allMaterials = [...allMaterials, ...fetched];
-      updateState();
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setStudyMaterialsList(data);
+    }, (error) => {
+      console.error("Study materials listener error:", error);
     });
 
     return () => {
-      unsubMaterials();
       unsubHomework();
       unsubStudyMaterials();
     };
   }, []);
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setSubmissionFile(e.target.files[0]);
+    }
+  };
+
+  const handleDownloadFile = (fileName: string, base64Data: string) => {
+    try {
+      const a = document.createElement("a");
+      a.href = base64Data;
+      a.download = fileName || "download";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error("Error downloading file", error);
+    }
+  };
+
+  const handleBase64Upload = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      if (file.size > 800 * 1024) {
+        reject(new Error("File is too large. Please select an image under 800KB."));
+        return;
+      }
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = (error) => reject(error);
+    });
+  };
+
   const handleSubmission = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!submittingFor || !submissionFile || !profile) return;
     
+    setIsUploading(true);
+    setUploadProgress(0);
+    
+    const progressInterval = setInterval(() => {
+      setUploadProgress(prev => {
+        if (prev >= 95) {
+          clearInterval(progressInterval);
+          return 95;
+        }
+        return prev + 15;
+      });
+    }, 200);
+
     try {
-      setSubmissionState('UPLOADING');
-      const fileRef = ref(storage, `student_submissions/${profile.id}_${Date.now()}_${submissionFile.name}`);
-      const uploadTask = await uploadBytes(fileRef, submissionFile);
-      const downloadURL = await getDownloadURL(uploadTask.ref);
+      const base64Data = await handleBase64Upload(submissionFile);
       
       const submissionRef = doc(collection(db, "submissions"));
       await setDoc(submissionRef, {
@@ -254,26 +352,31 @@ function HomeworkTab() {
         homeworkTitle: submittingFor.title,
         studentId: profile.id,
         studentName: profile.fullName,
-        fileUrl: downloadURL,
+        fileUrl: base64Data,
         fileName: submissionFile.name,
         fileType: submissionFile.type,
         submittedAt: new Date().toISOString()
       });
+
+      setUploadProgress(100);
+      clearInterval(progressInterval);
       
-      toast.success("Homework submitted successfully");
-      setSubmittingFor(null);
-      setSubmissionFile(null);
+      setTimeout(() => {
+        alert("Homework submitted successfully.");
+        setSubmittingFor(null);
+        setSubmissionFile(null);
+        setIsUploading(false);
+        setUploadProgress(0);
+      }, 500);
+      
     } catch (error: any) {
-      setSubmissionState('ERROR');
-      console.error(error);
-      alert(error.message || "Upload failed");
-    } finally {
-      setSubmissionState('IDLE');
+      clearInterval(progressInterval);
+      console.error("Upload error:", error);
+      alert(error.message || "An error occurred during submission.");
+      setIsUploading(false);
+      setUploadProgress(0);
     }
   };
-
-  const homeworks = materials.filter(m => m.type === "homework");
-  const studyMaterials = materials.filter(m => m.type === "study_material");
 
   return (
     <>
@@ -281,20 +384,20 @@ function HomeworkTab() {
         {/* Study Materials Section */}
         <div>
           <h3 className="text-xl font-medium text-white mb-4">Shared Study Materials & Images</h3>
-          {studyMaterials.length === 0 ? (
+          {studyMaterialsList.length === 0 ? (
             <div className="text-center py-8 text-[#8E8E93] border border-white/5 rounded-2xl bg-[#1A1A1A]">
               No study materials shared yet.
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {studyMaterials.map((sm) => (
+              {studyMaterialsList.map((sm) => (
                 <div key={sm.id} className="p-5 rounded-2xl border border-white/5 bg-[#121212] hover:bg-[#1A1A1A] transition-colors cursor-pointer group flex flex-col justify-between h-full" onClick={() => setPreviewMaterial(sm)}>
                   <div>
                     <div className="flex items-start justify-between">
                       <div className="p-3 rounded-xl border bg-blue-500/10 border-blue-500/20 text-blue-400 mb-3 block w-fit">
-                        {sm.fileType.startsWith('image/') ? <Eye className="w-5 h-5" /> : <Download className="w-5 h-5" />}
+                        {sm.fileType?.startsWith('image/') ? <Eye className="w-5 h-5" /> : <Download className="w-5 h-5" />}
                       </div>
-                      {sm.fileType.startsWith('image/') && (
+                      {sm.fileType?.startsWith('image/') && (
                         <div className="w-16 h-16 rounded-lg overflow-hidden bg-black border border-white/10 shrink-0 ml-4 group-hover:scale-105 transition-transform">
                           <img src={sm.fileData} alt="" className="w-full h-full object-cover opacity-80 group-hover:opacity-100" />
                         </div>
@@ -306,7 +409,7 @@ function HomeworkTab() {
                   </div>
                   <div className="mt-4 flex gap-2">
                     <button className="text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 w-full justify-center">
-                      <Eye className="w-3.5 h-3.5" /> {sm.fileType.startsWith('image/') ? "Preview Image" : "Download / View PDF"}
+                      <Eye className="w-3.5 h-3.5" /> {sm.fileType?.startsWith('image/') ? "Preview Image" : "Download / View PDF"}
                     </button>
                   </div>
                 </div>
@@ -319,12 +422,12 @@ function HomeworkTab() {
         <div>
           <h3 className="text-xl font-medium text-white mb-4">Pending Homework</h3>
           <div className="space-y-4">
-            {homeworks.length === 0 && (
+            {homeworkList.length === 0 && (
               <div className="text-center py-8 text-[#8E8E93] border border-white/5 rounded-2xl bg-[#1A1A1A]">
                 No homework assigned yet.
               </div>
             )}
-            {homeworks.map((hw, i) => (
+            {homeworkList.map((hw, i) => (
               <div key={hw.id} className="p-5 rounded-2xl border border-white/5 bg-[#121212] flex items-center justify-between group hover:bg-[#1A1A1A] transition-colors">
                 <div className="flex items-start gap-4">
                   <div className="p-3 rounded-xl border bg-yellow-500/10 border-yellow-500/20 text-yellow-500 shrink-0">
@@ -340,14 +443,12 @@ function HomeworkTab() {
                     <p className="text-xs text-[#8E8E93] mt-2 group-hover:text-[#A0A0A5]">Uploaded By {hw.uploadedBy || "Teacher"} • {new Date(hw.createdAt).toLocaleDateString()}</p>
                     <div className="mt-3 flex flex-wrap gap-2">
                        {hw.fileData && (
-                        <a 
-                          href={hw.fileData}
-                          target="_blank" 
-                          rel="noopener noreferrer"
+                        <button 
+                          onClick={() => setPreviewMaterial(hw)}
                           className="text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5"
                         >
-                          <Download className="w-3.5 h-3.5" /> Download / View
-                        </a>
+                          <Eye className="w-3.5 h-3.5" /> Preview / Download
+                        </button>
                       )}
                       <button 
                         onClick={() => setSubmittingFor(hw)}
@@ -372,25 +473,29 @@ function HomeworkTab() {
                   <h3 className="text-white font-medium">{previewMaterial.title}</h3>
                   <p className="text-xs text-[#8E8E93] mt-1">{previewMaterial.fileName}</p>
                </div>
-               <button onClick={() => setPreviewMaterial(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
-                 <X className="w-5 h-5 text-white" />
-               </button>
+               <div className="flex items-center gap-2">
+                 <button onClick={() => handleDownloadFile(previewMaterial.fileName, previewMaterial.fileData)} className="p-2 hover:bg-white/10 rounded-full transition-colors" title="Download">
+                   <Download className="w-5 h-5 text-white" />
+                 </button>
+                 <button onClick={() => setPreviewMaterial(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors" title="Close">
+                   <X className="w-5 h-5 text-white" />
+                 </button>
+               </div>
             </div>
             <div className="p-4 flex-1 overflow-auto bg-black flex items-center justify-center min-h-[50vh]">
-              {previewMaterial.fileType.startsWith("image/") ? (
+              {previewMaterial.fileType?.startsWith("image/") ? (
                 <img src={previewMaterial.fileData} alt="Preview" className="max-w-full max-h-full object-contain" />
               ) : previewMaterial.fileType === "application/pdf" ? (
                 <iframe src={previewMaterial.fileData} className="w-full h-[60vh] md:h-[70vh] bg-white rounded-lg" title="PDF Preview" />
               ) : (
                 <div className="text-white text-center">
                    <p className="mb-4">Preview not available for this file type.</p>
-                   <a
-                     href={previewMaterial.fileData}
-                     download={previewMaterial.fileName}
+                   <button
+                     onClick={() => handleDownloadFile(previewMaterial.fileName, previewMaterial.fileData)}
                      className="px-6 py-2 bg-white text-black font-medium rounded-lg"
                    >
                      Download File
-                   </a>
+                   </button>
                 </div>
               )}
             </div>
@@ -418,28 +523,40 @@ function HomeworkTab() {
                 <div className="relative w-full bg-[#1A1A1A] border border-white/10 border-dashed rounded-xl px-4 py-8 text-center flex flex-col items-center cursor-pointer hover:bg-white/5 transition-colors">
                   <Upload className="w-8 h-8 text-[#8E8E93] mb-2" />
                   <p className={`text-sm ${submissionFile ? 'text-white' : 'text-[#8E8E93]'}`}>
-                    {submissionFile ? submissionFile.name : "Click or drag file to upload (Max 10MB)"}
+                    {submissionFile ? submissionFile.name : "Click or drag file to upload"}
                   </p>
                   <input 
                     type="file" 
                     required
-                    accept=".pdf,image/*" 
+                    accept="image/*,application/pdf" 
                     className="absolute inset-0 opacity-0 cursor-pointer" 
-                    onChange={(e) => {
-                      if (e.target.files && e.target.files.length > 0) {
-                        setSubmissionFile(e.target.files[0]);
-                      }
-                    }} 
+                    onChange={handleFileChange}
+                    disabled={isUploading}
                   />
                 </div>
               </div>
               <button 
                 type="submit" 
-                disabled={submissionState === 'UPLOADING' || !submissionFile}
+                disabled={isUploading || !submissionFile}
                 className="w-full bg-white text-black font-medium py-3 rounded-xl hover:bg-gray-200 transition-colors flex items-center justify-center gap-2 disabled:opacity-70"
               >
-                {submissionState === 'UPLOADING' ? <Loader2 className="w-5 h-5 animate-spin" /> : "Confirm Submission"}
+                {isUploading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Confirm Submission"}
               </button>
+              
+              {isUploading && (
+                <div className="mt-4 p-4 rounded-xl border border-white/5 bg-[#1A1A1A]">
+                   <div className="flex justify-between items-center mb-2">
+                     <span className="text-sm text-[#8E8E93]">Uploading...</span>
+                     <span className="text-sm text-white font-medium">{uploadProgress}%</span>
+                   </div>
+                   <div className="w-full bg-[#121212] rounded-full h-2">
+                     <div 
+                       className="bg-white h-2 rounded-full transition-all duration-300"
+                       style={{ width: `${uploadProgress}%` }}
+                     ></div>
+                   </div>
+                </div>
+              )}
             </form>
           </div>
         </div>
@@ -488,7 +605,36 @@ function FeesTab() {
 
 function ProfileTab() {
   const { profile } = useAuthStore();
+  const [liveProfile, setLiveProfile] = useState<any>(profile);
   const [isUploading, setIsUploading] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  
+  // Edit Form State
+  const [editForm, setEditForm] = useState({
+    mobileNumber: profile?.mobileNumber || "",
+    dob: profile?.dob || "",
+    address: profile?.address || "",
+    caste: profile?.caste || "",
+  });
+
+  useEffect(() => {
+    if (!profile?.id) return;
+    const unsub = onSnapshot(doc(db, "users", profile.id), (docS) => {
+      if (docS.exists()) {
+        const data = docS.data();
+        setLiveProfile(data);
+        if (!isEditing) {
+          setEditForm({
+            mobileNumber: data.mobileNumber || "",
+            dob: data.dob || "",
+            address: data.address || "",
+            caste: data.caste || "",
+          });
+        }
+      }
+    });
+    return () => unsub();
+  }, [profile?.id, isEditing]);
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -518,20 +664,39 @@ function ProfileTab() {
     }
   };
 
+  const handleSaveProfile = async () => {
+    if (!profile?.id) return;
+    try {
+      const userRef = doc(db, 'users', profile.id);
+      await updateDoc(userRef, {
+        mobileNumber: editForm.mobileNumber,
+        dob: editForm.dob,
+        address: editForm.address,
+        caste: editForm.caste,
+        updatedAt: new Date().toISOString()
+      });
+      toast.success("Profile details updated successfully");
+      setIsEditing(false);
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to update profile details");
+    }
+  };
+
   return (
     <div className="flex flex-col items-center max-w-sm mx-auto">
       {/* Digital ID Card */}
-      <div className="w-full aspect-[2/3] rounded-3xl border border-white/10 bg-gradient-to-b from-[#222] to-[#0A0A0A] p-6 flex flex-col shadow-2xl relative overflow-hidden">
+      <div className="w-full rounded-3xl border border-white/10 bg-gradient-to-b from-[#222] to-[#0A0A0A] p-6 flex flex-col shadow-2xl relative overflow-hidden">
         {/* Hologram aesthetic */}
         <div className="absolute top-0 left-0 w-full h-[100px] bg-gradient-to-b from-white/10 to-transparent pointer-events-none"></div>
         
-        <div className="text-center mb-8 relative z-10">
+        <div className="text-center mb-6 relative z-10">
           <p className="text-[10px] uppercase tracking-[0.2em] text-[#8E8E93] font-bold mb-1">Shivkalyan Sanstha</p>
           <div className="h-px w-12 bg-white/20 mx-auto mt-2"></div>
         </div>
 
         <div className="flex-1 flex flex-col items-center justify-center relative z-10">
-          <label className="relative group cursor-pointer w-32 h-32 rounded-full border-4 border-[#1A1A1A] bg-[#333] mb-6 overflow-hidden shadow-xl block">
+          <label className="relative group cursor-pointer w-28 h-28 rounded-full border-4 border-[#1A1A1A] bg-[#333] mb-4 overflow-hidden shadow-xl block">
             <input 
               type="file" 
               accept="image/*" 
@@ -539,11 +704,11 @@ function ProfileTab() {
               onChange={handleImageUpload}
               disabled={isUploading}
             />
-            {profile?.photoURL ? (
-              <img src={profile.photoURL} alt="Profile" className="w-full h-full object-cover" />
+            {liveProfile?.photoURL ? (
+              <img src={liveProfile.photoURL} alt="Profile" className="w-full h-full object-cover" />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-4xl text-[#8E8E93]">
-                <User className="w-12 h-12" />
+                <User className="w-10 h-10" />
               </div>
             )}
             <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
@@ -554,22 +719,89 @@ function ProfileTab() {
               )}
             </div>
           </label>
-          <h2 className="text-2xl font-semibold text-white mb-1">{profile?.fullName || "Student"}</h2>
-          <p className="text-sm text-[#8E8E93] mb-6">{profile?.role}</p>
+          <h2 className="text-xl font-semibold text-white mb-1">{liveProfile?.fullName || "Student"}</h2>
+          <p className="text-xs text-[#8E8E93] mb-4">{liveProfile?.role}</p>
           
-          <div className="w-full bg-[#1A1A1A] rounded-xl p-4 border border-white/5">
-            <div className="flex justify-between text-xs mb-2">
-              <span className="text-[#8E8E93]">Mobile</span>
-              <span className="text-white font-medium">{profile?.mobileNumber || "N/A"}</span>
-            </div>
-            <div className="flex justify-between text-xs mb-2">
-              <span className="text-[#8E8E93]">DOB</span>
-              <span className="text-white font-medium">--</span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-[#8E8E93]">Blood Group</span>
-              <span className="text-white font-medium">--</span>
-            </div>
+          <div className="w-full bg-[#1A1A1A] rounded-xl p-4 border border-white/5 space-y-3">
+            {isEditing ? (
+              <div className="space-y-3">
+                <div className="flex flex-col gap-1 text-xs">
+                  <label className="text-[#8E8E93]">Mobile Number</label>
+                  <input
+                    type="text"
+                    value={editForm.mobileNumber}
+                    onChange={(e) => setEditForm({...editForm, mobileNumber: e.target.value})}
+                    className="bg-black border border-white/10 rounded px-2 py-1 text-white focus:outline-none focus:border-white/30"
+                  />
+                </div>
+                <div className="flex flex-col gap-1 text-xs">
+                  <label className="text-[#8E8E93]">DOB</label>
+                  <input
+                    type="date"
+                    value={editForm.dob}
+                    onChange={(e) => setEditForm({...editForm, dob: e.target.value})}
+                    className="bg-black border border-white/10 rounded px-2 py-1 text-white focus:outline-none focus:border-white/30"
+                  />
+                </div>
+                <div className="flex flex-col gap-1 text-xs">
+                  <label className="text-[#8E8E93]">Address</label>
+                  <input
+                    type="text"
+                    value={editForm.address}
+                    onChange={(e) => setEditForm({...editForm, address: e.target.value})}
+                    className="bg-black border border-white/10 rounded px-2 py-1 text-white focus:outline-none focus:border-white/30"
+                  />
+                </div>
+                <div className="flex flex-col gap-1 text-xs">
+                  <label className="text-[#8E8E93]">Caste</label>
+                  <input
+                    type="text"
+                    value={editForm.caste}
+                    onChange={(e) => setEditForm({...editForm, caste: e.target.value})}
+                    className="bg-black border border-white/10 rounded px-2 py-1 text-white focus:outline-none focus:border-white/30"
+                  />
+                </div>
+                <div className="flex justify-end gap-2 mt-2 pt-2 border-t border-white/5">
+                  <button onClick={() => setIsEditing(false)} className="text-white border border-white/20 px-3 py-1 rounded text-xs hover:bg-white/10">Cancel</button>
+                  <button onClick={handleSaveProfile} className="bg-white text-black px-3 py-1 rounded text-xs font-medium hover:bg-gray-200">Save</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-col gap-1 text-xs">
+                  <span className="text-[#8E8E93]">Mobile Number</span>
+                  <span className="text-white font-medium">{liveProfile?.mobileNumber || "N/A"}</span>
+                </div>
+                <div className="flex flex-col gap-1 text-xs">
+                  <span className="text-[#8E8E93]">DOB</span>
+                  <span className="text-white font-medium">{liveProfile?.dob || "N/A"}</span>
+                </div>
+                <div className="flex flex-col gap-1 text-xs">
+                  <span className="text-[#8E8E93]">Address</span>
+                  <span className="text-white font-medium break-words leading-relaxed">{liveProfile?.address || "N/A"}</span>
+                </div>
+                <div className="flex flex-col gap-1 text-xs">
+                  <span className="text-[#8E8E93]">Caste</span>
+                  <span className="text-white font-medium">{liveProfile?.caste || "N/A"}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs mt-2 pt-2 border-t border-white/5">
+                  <div className="flex flex-col gap-1">
+                     <span className="text-[#8E8E93]">Class</span>
+                     <span className="text-white font-medium">{liveProfile?.studentClass || "N/A"}</span>
+                  </div>
+                  <div className="flex flex-col gap-1 text-right">
+                     <span className="text-[#8E8E93]">Medium</span>
+                     <span className="text-white font-medium break-words">{liveProfile?.studentMedium || "N/A"}</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsEditing(true)}
+                  className="w-full mt-4 bg-white/10 hover:bg-white/20 text-white font-medium py-2 rounded-lg text-xs transition-colors"
+                >
+                  Edit Details
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>

@@ -1,158 +1,115 @@
 import React, { useState, useEffect } from "react";
-import { RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
-import { auth, db, handleFirestoreError, OperationType } from "../lib/firebase";
-import { UserRole } from "../types";
+import { auth, db } from "../lib/firebase";
 import { useAuthStore } from "../store/useAuthStore";
+import { useSchoolLogo } from "../hooks/useSchoolLogo";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import { Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
-declare global {
-  interface Window {
-    recaptchaVerifier: any;
-  }
-}
-
-const ROLES: UserRole[] = ["Student", "Teacher", "Admin", "Parent"];
-
 export function Login() {
   const navigate = useNavigate();
   const { user, profile } = useAuthStore();
+  const logoUrl = useSchoolLogo();
   
-  const [role, setRole] = useState<UserRole>("Student");
-  const [fullName, setFullName] = useState("");
-  const [mobile, setMobile] = useState("");
-  const [otp, setOtp] = useState("");
-  const [qualifications, setQualifications] = useState("");
-  const [assignedClass, setAssignedClass] = useState("");
-  
-  const [step, setStep] = useState<"details" | "otp">("details");
-  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isNewUser, setIsNewUser] = useState(false);
+  const [verifiedEmail, setVerifiedEmail] = useState("");
+
+  // Registration form state
+  const [fullName, setFullName] = useState("");
+  const [dob, setDob] = useState("");
+  const [address, setAddress] = useState("");
+  const [caste, setCaste] = useState("");
+  const [studentClass, setStudentClass] = useState("9th Standard");
+  const [studentMedium, setStudentMedium] = useState("Medium 1");
+  const [securityCode, setSecurityCode] = useState("");
 
   useEffect(() => {
-    if (user && profile) {
+    if (user && profile && !isNewUser) {
       if (profile.role === "Admin") navigate("/admin");
       else if (profile.role === "Student") navigate("/student");
       else navigate(`/${profile.role.toLowerCase()}`);
     }
-  }, [user, profile, navigate]);
+  }, [user, profile, navigate, isNewUser]);
 
-  useEffect(() => {
-    if (!window.recaptchaVerifier) {
-      window.recaptchaVerifier = new RecaptchaVerifier(auth, "recaptcha-container", {
-        size: "invisible",
-      });
-    }
-    return () => {
-      if (window.recaptchaVerifier) {
-        window.recaptchaVerifier.clear();
-        window.recaptchaVerifier = undefined;
-      }
-    };
-  }, []);
-
-  const handleSendOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!fullName.trim()) return toast.error("Please enter your full name.");
-    if (!mobile.trim() || mobile.length !== 10 || !/^\d+$/.test(mobile)) return toast.error("Please enter a valid 10-digit mobile number.");
-    
-    if (role === "Teacher") {
-      if (!qualifications.trim()) return toast.error("Please enter your qualifications.");
-      if (!assignedClass.trim()) return toast.error("Please enter your assigned class.");
-    }
-    
-    if (role === "Student") {
-      if (!assignedClass.trim()) return toast.error("Please select a standard/class.");
-    }
-
+  const handleGoogleSignIn = async () => {
     setLoading(true);
     try {
-      // By-pass OTP for testing
-      const { signInWithEmailAndPassword, createUserWithEmailAndPassword } = await import("firebase/auth");
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      const email = result.user.email;
       
-      const email = `test${mobile}@shivkalyan.edu`;
-      const password = `pass${mobile}123!`;
-      let currentUser;
-
-      try {
-        const userCredential = await signInWithEmailAndPassword(auth, email, password);
-        currentUser = userCredential.user;
-      } catch (error: any) {
-        if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential' || error.code === 'auth/invalid-login-credentials') {
-          const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-          currentUser = userCredential.user;
-        } else {
-          throw error;
-        }
+      if (!email) {
+        throw new Error("No verified email received from Google.");
       }
 
-      if (currentUser) {
-        const userDocRef = doc(db, "users", currentUser.uid);
-        const now = new Date().toISOString();
-        
-        const profileData = {
-          id: currentUser.uid,
-          fullName,
-          mobileNumber: mobile,
-          role,
-          ...(role === "Teacher" ? { qualifications, assignedClass } : {}),
-          ...(role === "Student" ? { assignedClass } : {}),
-          createdAt: now,
-          updatedAt: now,
-        };
-        
-        await setDoc(userDocRef, profileData, { merge: true });
-        toast.success("Successfully logged in (OTP Bypassed)!");
+      setVerifiedEmail(email);
+
+      // Check existence
+      const docRef = doc(db, "users", email);
+      const docSnap = await getDoc(docRef);
+
+      if (docSnap.exists()) {
+        toast.success("Successfully logged in!");
+        // Navigation is handled by the useEffect above
+      } else {
+        setIsNewUser(true);
       }
     } catch (error: any) {
       console.error(error);
-      toast.error(error.message || "Failed to login.");
+      if (error.code === 'auth/unauthorized-domain') {
+        const domain = window.location.hostname;
+        toast.error(`Domain unauthorized. Please add '${domain}' to Firebase Console > Authentication > Settings > Authorized domains.`, { duration: 10000 });
+      } else if (error.code === 'auth/operation-not-allowed') {
+        toast.error("Google Sign-In is not enabled. Please enable it in the Firebase Console > Authentication > Sign-in method.", { duration: 10000 });
+      } else {
+        toast.error(error.message || "Failed to sign in with Google.");
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const handleVerifyOtp = async (e: React.FormEvent) => {
+  const handleRegistrationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!otp.trim() || !confirmationResult) return;
+    
+    if (securityCode !== "SHIVKALYAN2026") {
+      toast.error("Invalid School Admission Code. Please check with your class teacher.");
+      return;
+    }
+
+    if (!fullName || !dob || !address || !caste || !studentClass || !studentMedium) {
+      toast.error("Please fill all the details.");
+      return;
+    }
 
     setLoading(true);
     try {
-      const result = await confirmationResult.confirm(otp);
-      const user = result.user;
+      const newUserProfile = {
+        id: verifiedEmail,
+        fullName,
+        dob,
+        address,
+        caste,
+        studentClass,
+        studentMedium,
+        role: "Student",
+        email: verifiedEmail,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
 
-      const userDocRef = doc(db, "users", user.uid);
-      const userDoc = await getDoc(userDocRef);
-
-      if (!userDoc.exists()) {
-        const now = new Date().toISOString();
-        const newProfile = {
-          fullName,
-          mobileNumber: user.phoneNumber || mobile,
-          role,
-          ...(role === "Teacher" ? { qualifications, assignedClass } : {}),
-          createdAt: now,
-          updatedAt: now,
-        };
-        
-        try {
-          await setDoc(userDocRef, newProfile);
-        } catch (dbError) {
-          handleFirestoreError(dbError, OperationType.CREATE, `users/${user.uid}`);
-        }
-      }
-
-      toast.success("Successfully logged in!");
+      const docRef = doc(db, "users", verifiedEmail);
+      await setDoc(docRef, newUserProfile);
+      
+      toast.success("Registration successful!");
+      setIsNewUser(false); // Triggers routing to dashboard since user profile updates in App.tsx
     } catch (error: any) {
       console.error(error);
-      if (error.code === 'auth/invalid-verification-code') {
-        toast.error("Invalid OTP code. Please try again.");
-      } else {
-        toast.error(error.message || "Invalid OTP.");
-      }
+      toast.error(error.message || "Failed to complete registration.");
     } finally {
       setLoading(false);
     }
@@ -160,176 +117,168 @@ export function Login() {
 
   return (
     <div className="flex flex-col min-h-screen bg-[#000000] font-sans selection:bg-white/30 selection:text-white">
-      <div id="recaptcha-container" />
-
-      {/* Main Content Area */}
       <div className="flex-1 flex flex-col justify-center px-8 w-full max-w-md mx-auto relative z-10">
         <div className="mb-10 text-center sm:text-left">
           <div className="flex items-center justify-center sm:justify-start gap-4 mb-4">
-            <div className="flex-shrink-0 w-12 h-12 bg-white/10 rounded-full flex items-center justify-center border border-white/20">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-7 h-7 text-white">
-                 <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
-                 <path d="M2 12h20" />
-                 <path d="M12 2v20" />
-                 <path d="M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
-              </svg>
+            <div className="flex-shrink-0 w-12 h-12 bg-[#1A1A1A] rounded-full flex items-center justify-center border border-white/10 overflow-hidden">
+              {logoUrl ? (
+                <img 
+                  src={logoUrl} 
+                  alt="School Crest" 
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <span className="text-white font-bold tracking-widest">SK</span>
+              )}
             </div>
             <div className="flex flex-col text-left">
               <p className="text-[#E0E0E0] text-sm md:text-base font-semibold leading-tight">शिवकल्याण शिक्षण संस्था</p>
               <p className="text-[#8E8E93] text-[11px] font-medium mt-0.5">घणसोली, नवी मुंबई</p>
             </div>
           </div>
-          <h1 className="text-3xl font-medium tracking-tight text-[#FFFFFF] mt-6">Login as {role}</h1>
+          <h1 className="text-3xl font-medium tracking-tight text-[#FFFFFF] mt-6">
+             {isNewUser ? "Student Registration" : "Login"}
+          </h1>
         </div>
 
         <AnimatePresence mode="wait">
-          {step === "details" ? (
-            <motion.form 
-              key="details"
+          {!isNewUser ? (
+            <motion.div
+              key="login"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.3 }}
               className="space-y-5"
-              onSubmit={handleSendOtp}
             >
-              <div className="space-y-4">
-                <div>
-                  <input
-                    type="text"
-                    required
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    className="block w-full rounded-2xl border border-white/10 bg-[#121212] px-5 py-4 text-sm text-white placeholder-[#8E8E93] outline-none transition-colors focus:border-white/30 focus:bg-[#1A1A1A]"
-                    placeholder="Full Name"
-                  />
-                </div>
-
-                <div>
-                  <input
-                    type="tel"
-                    required
-                    maxLength={10}
-                    value={mobile}
-                    onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, '');
-                      if (val.length <= 10) setMobile(val);
-                    }}
-                    className="block w-full rounded-2xl border border-white/10 bg-[#121212] px-5 py-4 text-sm text-white placeholder-[#8E8E93] outline-none transition-colors focus:border-white/30 focus:bg-[#1A1A1A]"
-                    placeholder="10-digit Mobile Number"
-                  />
-                </div>
-                {role === "Teacher" && (
+              <button
+                onClick={handleGoogleSignIn}
+                disabled={loading}
+                className="flex w-full items-center justify-center gap-3 rounded-2xl bg-[#1A1A1A] border border-white/5 px-5 py-4 text-sm font-medium text-white transition-all hover:bg-[#222222] active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 shadow-lg shadow-black/50"
+              >
+                {loading ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
                   <>
-                    <div>
-                      <input
-                        type="text"
-                        required
-                        value={qualifications}
-                        onChange={(e) => setQualifications(e.target.value)}
-                        className="block w-full rounded-2xl border border-white/10 bg-[#121212] px-5 py-4 text-sm text-white placeholder-[#8E8E93] outline-none transition-colors focus:border-white/30 focus:bg-[#1A1A1A]"
-                        placeholder="Qualifications (e.g. M.Sc, B.Ed)"
+                    <svg className="w-5 h-5" viewBox="0 0 24 24">
+                      <path
+                        fill="currentColor"
+                        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
                       />
-                    </div>
+                      <path
+                        fill="currentColor"
+                        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                      />
+                      <path
+                        fill="currentColor"
+                        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+                      />
+                      <path
+                        fill="currentColor"
+                        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                      />
+                    </svg>
+                    Sign in with Google
                   </>
                 )}
-                
-                {(role === "Teacher" || role === "Student") && (
-                  <div>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Enter Class / Standard (e.g. Class 10 A, Batch 2)"
-                      value={assignedClass}
-                      onChange={(e) => setAssignedClass(e.target.value)}
-                      className="block w-full rounded-2xl border border-white/10 bg-[#121212] px-5 py-4 text-sm text-white focus:border-white/30 focus:bg-[#1A1A1A] placeholder-[#8E8E93]"
-                    />
-                  </div>
-                )}
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="mt-6 flex w-full items-center justify-center rounded-2xl bg-[#1A1A1A] border border-white/5 px-5 py-4 text-sm font-medium text-white transition-all hover:bg-[#222222] active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 shadow-lg shadow-black/50"
-              >
-                {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : "Continue"}
               </button>
-            </motion.form>
+            </motion.div>
           ) : (
-            <motion.form 
-              key="otp"
+            <motion.form
+              key="registration"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.3 }}
-              className="space-y-5"
-              onSubmit={handleVerifyOtp}
+              className="space-y-4"
+              onSubmit={handleRegistrationSubmit}
             >
-              <div className="mb-2">
-                <p className="text-sm text-[#8E8E93]">
-                  Enter the 6-digit code sent to <span className="text-white">{mobile}</span>
-                </p>
-                <button 
-                  type="button" 
-                  onClick={() => setStep("details")}
-                  className="mt-2 text-xs font-medium text-[#8E8E93] hover:text-white transition-colors"
-                >
-                  Change Number
-                </button>
+              <div>
+                <input
+                  type="text"
+                  required
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  className="block w-full rounded-2xl border border-white/10 bg-[#121212] px-5 py-4 text-sm text-white placeholder-[#8E8E93] outline-none transition-colors focus:border-white/30 focus:bg-[#1A1A1A]"
+                  placeholder="Full Name"
+                />
+              </div>
+
+              <div>
+                <input
+                  type="date"
+                  required
+                  value={dob}
+                  onChange={(e) => setDob(e.target.value)}
+                  className="block w-full rounded-2xl border border-white/10 bg-[#121212] px-5 py-4 text-sm text-white placeholder-[#8E8E93] outline-none transition-colors focus:border-white/30 focus:bg-[#1A1A1A]"
+                />
               </div>
 
               <div>
                 <input
                   type="text"
                   required
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
-                  maxLength={6}
-                  className="block w-full rounded-2xl border border-white/10 bg-[#121212] px-5 py-4 text-center text-2xl tracking-[0.75em] text-white placeholder-[#333333] outline-none transition-colors focus:border-white/30 focus:bg-[#1A1A1A]"
-                  placeholder="------"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  className="block w-full rounded-2xl border border-white/10 bg-[#121212] px-5 py-4 text-sm text-white placeholder-[#8E8E93] outline-none transition-colors focus:border-white/30 focus:bg-[#1A1A1A]"
+                  placeholder="Address"
+                />
+              </div>
+
+              <div>
+                <input
+                  type="text"
+                  required
+                  value={caste}
+                  onChange={(e) => setCaste(e.target.value)}
+                  className="block w-full rounded-2xl border border-white/10 bg-[#121212] px-5 py-4 text-sm text-white placeholder-[#8E8E93] outline-none transition-colors focus:border-white/30 focus:bg-[#1A1A1A]"
+                  placeholder="Caste"
+                />
+              </div>
+
+              <div className="flex gap-4">
+                <select
+                  required
+                  value={studentClass}
+                  onChange={(e) => setStudentClass(e.target.value)}
+                  className="block w-full rounded-2xl border border-white/10 bg-[#121212] px-5 py-4 text-sm text-white focus:border-white/30 focus:bg-[#1A1A1A] placeholder-[#8E8E93] appearance-none"
+                >
+                  <option value="9th Standard">9th Standard</option>
+                  <option value="10th Standard">10th Standard</option>
+                </select>
+
+                <select
+                  required
+                  value={studentMedium}
+                  onChange={(e) => setStudentMedium(e.target.value)}
+                  className="block w-full rounded-2xl border border-white/10 bg-[#121212] px-5 py-4 text-sm text-white focus:border-white/30 focus:bg-[#1A1A1A] placeholder-[#8E8E93] appearance-none"
+                >
+                  <option value="Medium 1">Medium 1</option>
+                  <option value="Medium 2">Medium 2</option>
+                </select>
+              </div>
+
+              <div>
+                <input
+                  type="password"
+                  required
+                  value={securityCode}
+                  onChange={(e) => setSecurityCode(e.target.value)}
+                  className="block w-full rounded-2xl border border-white/10 bg-[#121212] px-5 py-4 text-sm text-white placeholder-[#8E8E93] outline-none transition-colors focus:border-white/30 focus:bg-[#1A1A1A]"
+                  placeholder="School Security Code"
                 />
               </div>
 
               <button
                 type="submit"
-                disabled={loading || otp.length < 6}
+                disabled={loading}
                 className="mt-6 flex w-full items-center justify-center rounded-2xl bg-white px-5 py-4 text-sm font-medium text-black transition-all hover:bg-gray-200 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50"
               >
-                {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : "Verify & Login"}
+                {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : "Submit Registration"}
               </button>
             </motion.form>
           )}
         </AnimatePresence>
-      </div>
-
-      {/* Footer Role Navigation */}
-      <div className="pb-10 pt-4 px-8 w-full max-w-md mx-auto relative z-10">
-        <div className="flex items-center justify-between">
-          {ROLES.map((r) => {
-            const isActive = role === r;
-            return (
-              <button
-                key={r}
-                type="button"
-                onClick={() => {
-                  if (step === "details") setRole(r);
-                }}
-                disabled={step === "otp"} // Disable changing role when entering OTP
-                className={`flex flex-col items-center gap-1.5 transition-all ${
-                  isActive ? "text-white" : "text-[#8E8E93] hover:text-white/80"
-                } ${step === "otp" ? "opacity-50 cursor-not-allowed" : ""}`}
-              >
-                <span className="text-xs font-medium tracking-wide">{r}</span>
-                <div 
-                  className={`h-1 w-1 rounded-full transition-all duration-300 ${
-                    isActive ? "bg-white scale-100" : "bg-transparent scale-0"
-                  }`} 
-                />
-              </button>
-            );
-          })}
-        </div>
       </div>
     </div>
   );

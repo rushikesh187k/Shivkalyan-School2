@@ -2,6 +2,7 @@ import React from "react";
 import { LogOut } from "lucide-react";
 import { auth } from "../lib/firebase";
 import { useAuthStore } from "../store/useAuthStore";
+import { useSchoolLogo } from "../hooks/useSchoolLogo";
 import { motion } from "motion/react";
 import clsx from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -26,6 +27,7 @@ interface DashboardLayoutProps {
 
 export function DashboardLayout({ title, tabs, activeTab, onTabChange, children }: DashboardLayoutProps) {
   const { profile } = useAuthStore();
+  const logoUrl = useSchoolLogo();
 
   const handleSignOut = () => {
     auth.signOut();
@@ -37,13 +39,12 @@ export function DashboardLayout({ title, tabs, activeTab, onTabChange, children 
       {/* Desktop Sidebar */}
       <aside className="hidden md:flex flex-col w-64 fixed inset-y-0 left-0 bg-[#0A0A0A] border-r border-white/5 z-50">
         <div className="h-24 flex items-center gap-3 px-6 border-b border-white/5">
-          <div className="flex-shrink-0 w-10 h-10 bg-white/10 rounded-full flex items-center justify-center border border-white/20">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6 text-white">
-               <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
-               <path d="M2 12h20" />
-               <path d="M12 2v20" />
-               <path d="M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
-            </svg>
+          <div className="flex-shrink-0 w-10 h-10 bg-[#1A1A1A] rounded-full flex items-center justify-center border border-white/10 overflow-hidden">
+            {logoUrl ? (
+               <img src={logoUrl} alt="School Logo" className="w-full h-full object-cover" />
+            ) : (
+               <span className="text-white font-bold text-sm tracking-widest">SK</span>
+            )}
           </div>
           <div className="flex flex-col justify-center">
             <h1 className="text-white font-medium text-sm leading-tight">शिवकल्याण शिक्षण संस्था</h1>
@@ -127,7 +128,7 @@ export function DashboardLayout({ title, tabs, activeTab, onTabChange, children 
             </div>
           </div>
           
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3 md:gap-4">
             {/* Mobile Only Sign Out */}
             <button 
               onClick={handleSignOut}
@@ -135,7 +136,7 @@ export function DashboardLayout({ title, tabs, activeTab, onTabChange, children 
             >
               <LogOut className="h-4 w-4" />
             </button>
-            <div className="hidden md:flex h-10 w-10 rounded-full bg-[#1A1A1A] border border-white/10 items-center justify-center overflow-hidden">
+            <div className="flex h-9 w-9 md:h-10 md:w-10 rounded-full bg-[#1A1A1A] border border-white/10 items-center justify-center overflow-hidden shrink-0">
               {profile?.photoURL ? (
                 <img src={profile.photoURL} alt="Profile" className="w-full h-full object-cover" />
               ) : (

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { collection, query, where, getDocs, updateDoc, doc } from "firebase/firestore";
+import { collection, query, where, onSnapshot, updateDoc, doc } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { UserProfile } from "../types";
 import { Loader2, Search, CheckCircle } from "lucide-react";
@@ -16,19 +16,18 @@ export function TeacherManageGrades() {
   const [isUpdating, setIsUpdating] = useState(false);
 
   useEffect(() => {
-    const fetchStudents = async () => {
-      try {
-        const q = query(collection(db, "users"), where("role", "==", "Student"));
-        const snapshot = await getDocs(q);
-        const fetched = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as UserProfile[];
-        setStudents(fetched);
-      } catch (error) {
-        console.error("Error fetching students:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchStudents();
+    setLoading(true);
+    const q = query(collection(db, "users"), where("role", "==", "Student"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const fetched = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as UserProfile[];
+      setStudents(fetched);
+      setLoading(false);
+    }, (error) => {
+      console.error("Error fetching students:", error);
+      setLoading(false);
+    });
+    
+    return () => unsubscribe();
   }, []);
 
   const handleUpdate = async (e: React.FormEvent) => {
@@ -61,6 +60,81 @@ export function TeacherManageGrades() {
     } finally {
       setIsUpdating(false);
     }
+  };
+
+  const generatePDF = () => {
+    if (!selectedStudent) return;
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    const htmlContent = `
+      <html>
+        <head>
+          <title>Report Card - ${selectedStudent.fullName}</title>
+          <style>
+            body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 40px; color: #000; }
+            .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 20px; margin-bottom: 30px; }
+            .header h1 { margin: 0; font-size: 28px; }
+            .header p { margin: 5px 0 0; font-size: 14px; color: #555; }
+            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; }
+            .field { margin-bottom: 10px; }
+            .label { font-weight: bold; color: #444; font-size: 12px; text-transform: uppercase; }
+            .value { font-size: 16px; margin-top: 5px; }
+            .grades-section { margin-top: 40px; border: 1px solid #ddd; padding: 20px; border-radius: 8px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>Student Report Card</h1>
+            <p>Generated on ${new Date().toLocaleDateString()}</p>
+          </div>
+          <div class="grid">
+            <div class="field">
+              <div class="label">Full Name</div>
+              <div class="value">${selectedStudent.fullName}</div>
+            </div>
+            <div class="field">
+              <div class="label">Class & Medium</div>
+              <div class="value">${selectedStudent.studentClass || 'N/A'} - ${selectedStudent.studentMedium || 'N/A'}</div>
+            </div>
+            <div class="field">
+              <div class="label">Date of Birth</div>
+              <div class="value">Not Specified</div>
+            </div>
+            <div class="field">
+              <div class="label">Address</div>
+              <div class="value">Not Specified</div>
+            </div>
+            <div class="field">
+              <div class="label">Caste / Category</div>
+              <div class="value">Not Specified</div>
+            </div>
+          </div>
+          
+          <div class="grades-section">
+            <h2>Academic Performance</h2>
+            <div class="grid">
+              <div class="field">
+                <div class="label">Overall Grade</div>
+                <div class="value">${selectedStudent.overallGrade || 'N/A'}</div>
+              </div>
+              <div class="field">
+                <div class="label">Attendance</div>
+                <div class="value">${selectedStudent.attendancePercentage ? selectedStudent.attendancePercentage + '%' : 'N/A'}</div>
+              </div>
+            </div>
+          </div>
+          <script>
+            window.onload = () => {
+              window.print();
+              setTimeout(() => { window.close(); }, 500);
+            }
+          </script>
+        </body>
+      </html>
+    `;
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
   };
 
   const filteredStudents = students.filter(st => 
@@ -107,7 +181,7 @@ export function TeacherManageGrades() {
                 >
                   <div>
                     <h3 className="text-white font-medium">{st.fullName}</h3>
-                    <p className="text-xs text-[#8E8E93] mt-1">{st.assignedClass || "No Class Assigned"}</p>
+                    <p className="text-xs text-[#8E8E93] mt-1">{st.studentClass ? `${st.studentClass} - ${st.studentMedium}` : st.assignedClass || "No Class Assigned"}</p>
                   </div>
                   {(st.attendancePercentage !== undefined || st.overallGrade) && (
                     <div className="text-xs space-y-1 text-right text-gray-400">
@@ -172,6 +246,13 @@ export function TeacherManageGrades() {
                     className="w-full bg-white text-black font-semibold py-4 rounded-xl hover:bg-gray-200 transition-colors flex justify-center items-center gap-2 disabled:opacity-75"
                   >
                     {isUpdating ? <Loader2 className="w-5 h-5 animate-spin" /> : <><CheckCircle className="w-5 h-5" /> Save Records</>}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={generatePDF}
+                    className="w-full mt-3 bg-[#1A1A1A] border border-white/10 text-white font-medium py-3 rounded-xl hover:bg-[#222222] transition-colors flex justify-center items-center"
+                  >
+                    Generate Report Card (PDF)
                   </button>
                 </div>
               </form>

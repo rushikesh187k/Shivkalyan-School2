@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from "react";
 import { useAuthStore } from "../store/useAuthStore";
-import { ref, uploadBytesResumable, uploadBytes, getDownloadURL } from "firebase/storage";
-import { auth, db, storage, handleFirestoreError, OperationType } from "../lib/firebase";
-import { LogOut, Users, UserCheck, Calendar, UserPlus, BookOpen, FileText, Upload, Shield, X, Loader2, LayoutDashboard, MessageSquare, Eye } from "lucide-react";
-import { collection, query, where, getCountFromServer, onSnapshot, orderBy, limit, doc, setDoc } from "firebase/firestore";
+import { auth, db, handleFirestoreError, OperationType } from "../lib/firebase";
+import { LogOut, Users, UserCheck, Calendar, UserPlus, BookOpen, FileText, Upload, Shield, X, Loader2, LayoutDashboard, MessageSquare, Eye, Download, Settings } from "lucide-react";
+import { collection, query, where, getCountFromServer, onSnapshot, orderBy, limit, doc, setDoc, addDoc } from "firebase/firestore";
 import { Notice, UserProfile, TeacherModel, Material } from "../types";
 import toast from "react-hot-toast";
 import { DashboardLayout, TabItem } from "../components/DashboardLayout";
 import { StudentSearch } from "../components/StudentSearch";
+import { TeacherAttendanceControl } from "../components/TeacherAttendanceControl";
+import { AdminSettings } from "../components/AdminSettings";
 import { motion } from "motion/react";
 
 const ADMIN_TABS: TabItem[] = [
@@ -15,12 +16,14 @@ const ADMIN_TABS: TabItem[] = [
   { id: "users", label: "Users", icon: Users },
   { id: "student_search", label: "Student Search", icon: Users },
   { id: "teachers", label: "Teachers", icon: BookOpen },
+  { id: "attendance", label: "Attendance Control", icon: UserCheck },
   { id: "notices", label: "Notices", icon: FileText },
   { id: "broadcast", label: "Broadcast", icon: MessageSquare },
   { id: "study_materials", label: "Study Materials", icon: BookOpen },
   { id: "homework", label: "Homework", icon: FileText },
   { id: "timetable", label: "Exam Time Table", icon: Calendar },
   { id: "notes", label: "Notes", icon: Upload },
+  { id: "settings", label: "Settings", icon: Settings },
 ];
 
 export function AdminDashboard() {
@@ -49,6 +52,21 @@ export function AdminDashboard() {
   const [noticeCategory, setNoticeCategory] = useState("Daily Notice");
   const [noticeContent, setNoticeContent] = useState("");
   const [isPosting, setIsPosting] = useState(false);
+
+  // Upload Lists State
+  const [homeworkList, setHomeworkList] = useState<any[]>([]);
+  const [studyMaterialsList, setStudyMaterialsList] = useState<any[]>([]);
+  const [timetablesList, setTimetablesList] = useState<any[]>([]);
+  const [notesList, setNotesList] = useState<any[]>([]);
+
+  // Upload State
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [materialTitle, setMaterialTitle] = useState("");
+  const [classTarget, setClassTarget] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [previewMaterial, setPreviewMaterial] = useState<any | null>(null);
 
   useEffect(() => {
     if (activeTab !== "users") return;
@@ -105,6 +123,43 @@ export function AdminDashboard() {
     };
   }, []);
 
+  useEffect(() => {
+    // 1. Homework listener
+    const qHomework = query(collection(db, "homework"), orderBy("createdAt", "desc"));
+    const unsubHomework = onSnapshot(qHomework, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setHomeworkList(data);
+    });
+
+    // 2. Study Materials listener
+    const qStudyMaterials = query(collection(db, "study_materials"), orderBy("createdAt", "desc"));
+    const unsubStudyMaterials = onSnapshot(qStudyMaterials, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setStudyMaterialsList(data);
+    });
+
+    // 3. Timetables listener
+    const qTimetables = query(collection(db, "exam_timetables"), orderBy("createdAt", "desc"));
+    const unsubTimetables = onSnapshot(qTimetables, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setTimetablesList(data);
+    });
+
+    // 4. Notes listener
+    const qNotes = query(collection(db, "notes"), orderBy("createdAt", "desc"));
+    const unsubNotes = onSnapshot(qNotes, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setNotesList(data);
+    });
+
+    return () => {
+      unsubHomework();
+      unsubStudyMaterials();
+      unsubTimetables();
+      unsubNotes();
+    };
+  }, []);
+
   const handleQuickAction = (action: string) => {
     if (action === "Post Notice") {
       setShowNoticeModal(true);
@@ -137,6 +192,138 @@ export function AdminDashboard() {
       toast.error(error.message || "Failed to post notice");
     } finally {
       setIsPosting(false);
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setSelectedFile(e.target.files[0]);
+    }
+  };
+
+  const handleDownloadFile = (fileName: string, base64Data: string) => {
+    try {
+      const a = document.createElement("a");
+      a.href = base64Data;
+      a.download = fileName || "download";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error("Error downloading file", error);
+    }
+  };
+
+  const handleBase64Upload = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      if (file.size > 800 * 1024) {
+        reject(new Error("File is too large. Please select an image under 800KB."));
+        return;
+      }
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = (error) => reject(error);
+    });
+  };
+
+  const handleUploadSubmit = async (e: React.FormEvent, type: string) => {
+    e.preventDefault();
+    if (!selectedFile || !materialTitle) {
+      alert("Please provide a title and select a file.");
+      return;
+    }
+    
+    const targetCollection = type;
+    setIsUploading(true);
+    setUploadProgress(0);
+
+    const progressInterval = setInterval(() => {
+      setUploadProgress(prev => {
+        if (prev >= 95) {
+          clearInterval(progressInterval);
+          return 95;
+        }
+        return prev + 15;
+      });
+    }, 200);
+
+    try {
+      const base64Data = await handleBase64Upload(selectedFile);
+      
+      const newDocRef = doc(collection(db, targetCollection));
+      await setDoc(newDocRef, {
+        title: materialTitle,
+        type: type,
+        fileData: base64Data,
+        fileName: selectedFile.name,
+        fileType: selectedFile.type,
+        uploadedBy: profile?.fullName || "Admin",
+        classTarget: classTarget || "",
+        createdAt: new Date().toISOString()
+      });
+      
+      setUploadProgress(100);
+      clearInterval(progressInterval);
+      
+      setTimeout(() => {
+        alert("File uploaded successfully.");
+        setSelectedFile(null);
+        setMaterialTitle("");
+        setClassTarget("");
+        setIsUploading(false);
+        setUploadProgress(0);
+      }, 500);
+      
+    } catch (error: any) {
+      clearInterval(progressInterval);
+      console.error("Upload error:", error);
+      alert(error.message || "Unknown error occurred during upload.");
+      setIsUploading(false);
+      setUploadProgress(0);
+    }
+  };
+
+  const handleGenerateTimetable = async () => {
+    setIsGenerating(true);
+    try {
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() + 20);
+
+      const coreSubjects: Record<string, string[]> = {
+        "Medium 1": ["Marathi", "Math", "Science", "History", "Geography", "English"],
+        "Medium 2": ["English", "Math", "Science", "History", "Geography", "Hindi"]
+      };
+
+      const classes = ["5th", "6th", "7th", "8th", "9th", "10th"];
+      for (const cls of classes) {
+        for (const medium of ["Medium 1", "Medium 2"]) {
+          const schedule = coreSubjects[medium].map((sub, i) => {
+            const date = new Date(startDate);
+            date.setDate(date.getDate() + i);
+            return {
+              date: date.toISOString().split("T")[0],
+              subject: sub
+            };
+          });
+
+          await addDoc(collection(db, "exam_timetables"), {
+            title: `Automated ${cls} Timetable - ${medium}`,
+            type: "timetable",
+            classTarget: cls,
+            mediumTarget: medium,
+            schedule: schedule,
+            uploadedBy: profile?.fullName || "Admin",
+            createdAt: new Date().toISOString()
+          });
+        }
+      }
+      alert("Exam Timetables generated successfully.");
+    } catch (error: any) {
+      console.error("Timetable generation error:", error);
+      alert(error.message || "Failed to generate timetables.");
+    } finally {
+      setIsGenerating(false);
     }
   };
 
@@ -313,105 +500,13 @@ export function AdminDashboard() {
     );
   };
 
-  const [materials, setMaterials] = useState<Material[]>([]);
-  const [uploadState, setUploadState] = useState<'IDLE' | 'UPLOADING' | 'ERROR'>('IDLE');
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [materialTitle, setMaterialTitle] = useState("");
-  const [classTarget, setClassTarget] = useState("");
-  const [previewMaterial, setPreviewMaterial] = useState<Material | null>(null);
-
-  useEffect(() => {
-    let allMaterials: Material[] = [];
-
-    const updateState = () => {
-      const sorted = [...allMaterials].sort((a, b) => 
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
-      setMaterials(sorted);
-    };
-
-    const qMaterials = query(collection(db, "materials"), orderBy("createdAt", "desc"));
-    const unsubMaterials = onSnapshot(qMaterials, (snapshot) => {
-      const fetched = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Material[];
-      allMaterials = allMaterials.filter(m => m.type === "homework" || m.type === "study_material"); 
-      allMaterials = [...allMaterials, ...fetched.filter(m => m.type !== "homework" && m.type !== "study_material")];
-      updateState();
-    });
-
-    const qHomework = query(collection(db, "homework"), orderBy("createdAt", "desc"));
-    const unsubHomework = onSnapshot(qHomework, (snapshot) => {
-      const fetched = snapshot.docs.map(doc => ({ id: doc.id, type: "homework", ...doc.data() })) as Material[];
-      allMaterials = allMaterials.filter(m => m.type !== "homework");
-      allMaterials = [...allMaterials, ...fetched];
-      updateState();
-    });
-
-    const qStudyMaterials = query(collection(db, "study_materials"), orderBy("createdAt", "desc"));
-    const unsubStudyMaterials = onSnapshot(qStudyMaterials, (snapshot) => {
-      const fetched = snapshot.docs.map(doc => ({ id: doc.id, type: "study_material", ...doc.data() })) as Material[];
-      allMaterials = allMaterials.filter(m => m.type !== "study_material");
-      allMaterials = [...allMaterials, ...fetched];
-      updateState();
-    });
-
-    return () => {
-      unsubMaterials();
-      unsubHomework();
-      unsubStudyMaterials();
-    };
-  }, []);
-
-  const handleUpload = async (e: React.FormEvent, type: string) => {
-    e.preventDefault();
-    if (!selectedFile || !materialTitle) {
-      toast.error("Please provide a title and select a file.");
-      return;
-    }
-    
-    try {
-      setUploadState('UPLOADING');
-      const fileRef = ref(storage, `admin_uploads/${Date.now()}_${selectedFile.name}`);
-      const snapshot = await uploadBytes(fileRef, selectedFile);
-      const downloadURL = await getDownloadURL(snapshot.ref);
-      
-      const collectionName = type === "homework" ? "homework" : (type === "study_material" ? "study_materials" : "materials");
-      const materialRef = doc(collection(db, collectionName));
-      const newMaterial: any = {
-        title: materialTitle,
-        type,
-        fileData: downloadURL,
-        fileName: selectedFile.name,
-        fileType: selectedFile.type,
-        uploadedBy: profile?.fullName || "Admin",
-        createdAt: new Date().toISOString()
-      };
-      
-      if (classTarget) {
-        newMaterial.classTarget = classTarget;
-      }
-      
-      await setDoc(materialRef, newMaterial);
-      
-      toast.success("File uploaded successfully");
-      setSelectedFile(null);
-      setMaterialTitle("");
-      setClassTarget("");
-    } catch (error: any) {
-      setUploadState('ERROR');
-      console.error(error);
-      alert(error.message || "Unknown error");
-    } finally {
-      setUploadState('IDLE');
-    }
-  };
-
   const renderUploadForm = (title: string, type: string) => (
     <div className="max-w-2xl">
       <h2 className="text-xl font-medium text-white mb-6">Upload {title}</h2>
       <div className="bg-[#1A1A1A] border border-white/5 p-6 rounded-2xl">
-        <form className="space-y-4" onSubmit={(e) => handleUpload(e, type)}>
+        <form className="space-y-4" onSubmit={(e) => handleUploadSubmit(e, type)}>
           <div>
-            <label className="block text-sm text-[#8E8E93] mb-2">File Title / Topic</label>
+            <label className="block text-sm text-[#8E8E93] mb-2">Title / Topic / Name</label>
             <input 
               type="text" 
               required 
@@ -422,10 +517,10 @@ export function AdminDashboard() {
             />
           </div>
           <div>
-            <label className="block text-sm text-[#8E8E93] mb-2">Target Class / Standard (Optional)</label>
+            <label className="block text-sm text-[#8E8E93] mb-2">Target Class (Optional)</label>
             <input
               type="text"
-              placeholder="e.g. Class 10 A, Batch 2"
+              placeholder="e.g. Class 10 A"
               value={classTarget}
               onChange={e => setClassTarget(e.target.value)}
               className="w-full bg-[#121212] border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-white/30"
@@ -436,46 +531,57 @@ export function AdminDashboard() {
             <div className="relative w-full bg-[#121212] border border-white/10 border-dashed rounded-xl px-4 py-8 text-center flex flex-col items-center cursor-pointer hover:bg-white/5 transition-colors">
               <Upload className="w-8 h-8 text-[#8E8E93] mb-2" />
               <p className={`text-sm ${selectedFile ? 'text-white' : 'text-[#8E8E93]'}`}>
-                {selectedFile ? selectedFile.name : "Click or drag file to upload (Max 10MB)"}
+                {selectedFile ? selectedFile.name : "Click or drag file to upload"}
               </p>
               <input 
                 type="file" 
-                accept=".pdf,image/*" 
+                accept="image/*,application/pdf" 
                 className="absolute inset-0 opacity-0 cursor-pointer" 
-                onChange={(e) => {
-                  if (e.target.files && e.target.files.length > 0) {
-                       setSelectedFile(e.target.files[0]);
-                   }
-                }} 
+                onChange={handleFileChange} 
+                disabled={isUploading}
               />
             </div>
           </div>
           <button 
             type="submit" 
-            disabled={uploadState === 'UPLOADING'}
+            disabled={isUploading}
             className="w-full bg-white text-black font-medium py-3 rounded-xl hover:bg-gray-200 transition-colors mt-6 flex items-center justify-center disabled:opacity-70"
           >
-            {uploadState === 'UPLOADING' ? <Loader2 className="w-5 h-5 animate-spin" /> : "Upload Material"}
+            {isUploading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Upload to System"}
           </button>
+          
+          {isUploading && (
+            <div className="mt-4 p-4 rounded-xl border border-white/5 bg-[#1A1A1A]">
+               <div className="flex justify-between items-center mb-2">
+                 <span className="text-sm text-[#8E8E93]">Uploading...</span>
+                 <span className="text-sm text-white font-medium">{uploadProgress}%</span>
+               </div>
+               <div className="w-full bg-[#121212] rounded-full h-2">
+                 <div 
+                   className="bg-white h-2 rounded-full transition-all duration-300"
+                   style={{ width: `${uploadProgress}%` }}
+                 ></div>
+               </div>
+            </div>
+          )}
         </form>
       </div>
     </div>
   );
 
-  const renderMaterialsList = (listTitle: string, type: string) => {
-    const list = materials.filter(m => m.type === type);
+  const renderMaterialsList = (listTitle: string, dataList: any[]) => {
     return (
       <div className="space-y-6">
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-xl font-medium text-white">{listTitle}</h2>
         </div>
-        {list.length === 0 ? (
+        {dataList.length === 0 ? (
           <div className="text-center py-12 text-[#8E8E93] border border-white/5 rounded-2xl bg-[#1A1A1A]">
-            No {listTitle.toLowerCase()} uploaded yet.
+            No records found here yet.
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {list.map(m => (
+            {dataList.map(m => (
               <div key={m.id} className="p-5 rounded-2xl border border-white/5 bg-[#1A1A1A] flex flex-col justify-between hover:bg-[#222222] transition-colors">
                  <div>
                    <h3 className="text-white font-medium mb-1">{m.title}</h3>
@@ -493,13 +599,12 @@ export function AdminDashboard() {
                    >
                      <Eye className="w-4 h-4" /> Preview
                    </button>
-                   <a 
-                     href={m.fileData}
-                     download={m.fileName}
+                   <button
+                     onClick={() => handleDownloadFile(m.fileName, m.fileData)}
                      className="flex items-center gap-2 px-4 py-2 bg-white text-black hover:bg-gray-200 rounded-lg text-sm font-medium transition-colors"
                    >
                     Download
-                   </a>
+                   </button>
                  </div>
               </div>
             ))}
@@ -513,11 +618,10 @@ export function AdminDashboard() {
   const handleAddTeacher = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!teacherName.trim() || !teacherMobile.trim() || !teacherSubject.trim()) {
-      return toast.error("Please fill in all fields.");
+      return alert("Please fill in all fields.");
     }
     setIsAddingTeacher(true);
     try {
-      // Auto generate ID for the teacher collection
       const newTeacherRef = doc(collection(db, "teachers"));
       await setDoc(newTeacherRef, {
         fullName: teacherName,
@@ -525,14 +629,14 @@ export function AdminDashboard() {
         subjectSpecialty: teacherSubject,
         createdAt: new Date().toISOString()
       });
-      toast.success("Teacher added successfully");
+      alert("Teacher added successfully");
       setShowAddTeacher(false);
       setTeacherName("");
       setTeacherMobile("");
       setTeacherSubject("");
     } catch (error: any) {
       console.error(error);
-      handleFirestoreError(error, OperationType.WRITE, "Teacher");
+      alert(error.message || "Failed to add teacher");
     } finally {
       setIsAddingTeacher(false);
     }
@@ -663,14 +767,18 @@ export function AdminDashboard() {
         return renderUsersContent();
       case "student_search":
         return <StudentSearch />;
+      case "attendance":
+        return <TeacherAttendanceControl />;
+      case "settings":
+        return <AdminSettings />;
       case "teachers":
         return renderTeachersContent();
       case "study_materials":
         return (
           <div className="space-y-10">
-            {renderUploadForm("Study Material", "study_material")}
+            {renderUploadForm("Study Material", "study_materials")}
             <hr className="border-white/10" />
-            {renderMaterialsList("Shared Study Materials", "study_material")}
+            {renderMaterialsList("Shared Study Materials", studyMaterialsList)}
           </div>
         );
       case "homework":
@@ -678,25 +786,52 @@ export function AdminDashboard() {
           <div className="space-y-10">
             {renderUploadForm("Homework Topic", "homework")}
             <hr className="border-white/10" />
-            {renderMaterialsList("Assigned Homework", "homework")}
+            {renderMaterialsList("Assigned Homework", homeworkList)}
           </div>
         );
       case "timetable":
         return (
-          <div className="space-y-10">
-            {renderUploadForm("Exam Time Table", "timetable")}
-            <hr className="border-white/10" />
-            {renderMaterialsList("Exam Time Table", "timetable")}
+          <div className="space-y-6">
+            <div className="flex flex-col gap-4 items-start p-8 rounded-2xl border border-white/5 bg-[#121212]">
+              <h2 className="text-xl text-white font-medium">Automated Exam Timetable Generator</h2>
+              <p className="text-sm text-[#8E8E93] max-w-2xl">
+                Automatically generate exam schedules for all 5th to 10th standard students across different mediums. This engine will calculate dates automatically based on the selected generation criteria.
+              </p>
+              <button
+                onClick={handleGenerateTimetable}
+                disabled={isGenerating}
+                className="mt-4 bg-white text-black px-6 py-3 font-medium rounded-xl hover:bg-gray-200 transition-colors flex items-center justify-center gap-2 min-w-[200px]"
+              >
+                {isGenerating ? <Loader2 className="w-5 h-5 animate-spin" /> : "Generate Automated Exam Timetable"}
+              </button>
+            </div>
+            <hr className="border-white/10 my-8" />
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {timetablesList.map((timetable: any) => (
+                <div key={timetable.id} className="p-5 rounded-2xl border border-white/5 bg-[#1A1A1A]">
+                  <h4 className="text-white font-medium">{timetable.title}</h4>
+                  <p className="text-xs text-[#8E8E93] mt-1 mb-4">{timetable.classTarget} - {timetable.mediumTarget}</p>
+                  <div className="space-y-2">
+                    {timetable.schedule && timetable.schedule.map((entry: any, i: number) => (
+                       <div key={i} className="flex justify-between items-center text-sm p-2 bg-black/50 rounded-lg">
+                          <span className="text-[#8E8E93]">{entry.date}</span>
+                          <span className="text-white">{entry.subject}</span>
+                       </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
-        )
+        );
       case "notes":
         return (
           <div className="space-y-10">
             {renderUploadForm("Class Notes", "notes")}
             <hr className="border-white/10" />
-            {renderMaterialsList("Class Notes", "notes")}
+            {renderMaterialsList("Class Notes", notesList)}
           </div>
-        )
+        );
       case "notices":
         return (
           <div className="space-y-6">
@@ -761,30 +896,34 @@ export function AdminDashboard() {
       {previewMaterial && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
           <div className="w-full max-w-4xl bg-[#121212] rounded-3xl border border-white/10 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="flex items-center justify-between p-4 border-b border-white/5">
+               <div className="flex items-center justify-between p-4 border-b border-white/5">
                <div>
                   <h3 className="text-white font-medium">{previewMaterial.title}</h3>
                   <p className="text-xs text-[#8E8E93] mt-1">{previewMaterial.fileName}</p>
                </div>
-               <button onClick={() => setPreviewMaterial(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
-                 <X className="w-5 h-5 text-white" />
-               </button>
+               <div className="flex items-center gap-2">
+                 <button onClick={() => handleDownloadFile(previewMaterial.fileName, previewMaterial.fileData)} className="p-2 hover:bg-white/10 rounded-full transition-colors" title="Download">
+                   <Download className="w-5 h-5 text-white" />
+                 </button>
+                 <button onClick={() => setPreviewMaterial(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors" title="Close">
+                   <X className="w-5 h-5 text-white" />
+                 </button>
+               </div>
             </div>
             <div className="p-4 flex-1 overflow-auto bg-black flex items-center justify-center min-h-[50vh]">
-              {previewMaterial.fileType.startsWith("image/") ? (
+              {previewMaterial.fileType?.startsWith("image/") ? (
                 <img src={previewMaterial.fileData} alt="Preview" className="max-w-full max-h-full object-contain" />
               ) : previewMaterial.fileType === "application/pdf" ? (
                 <iframe src={previewMaterial.fileData} className="w-full h-[60vh] md:h-[70vh] bg-white rounded-lg" title="PDF Preview" />
               ) : (
                 <div className="text-white text-center">
                    <p className="mb-4">Preview not available for this file type.</p>
-                   <a
-                     href={previewMaterial.fileData}
-                     download={previewMaterial.fileName}
+                   <button
+                     onClick={() => handleDownloadFile(previewMaterial.fileName, previewMaterial.fileData)}
                      className="px-6 py-2 bg-white text-black font-medium rounded-lg"
                    >
                      Download File
-                   </a>
+                   </button>
                 </div>
               )}
             </div>

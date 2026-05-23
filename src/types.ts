@@ -29,8 +29,13 @@ export interface UserProfile {
   role: UserRole;
   qualifications?: string;
   assignedClass?: string;
+  studentClass?: string;
+  studentMedium?: string;
   attendancePercentage?: number;
   overallGrade?: string;
+  dob?: string;
+  address?: string;
+  caste?: string;
   createdAt: string;
   updatedAt: string;
 }
